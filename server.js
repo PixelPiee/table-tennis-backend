@@ -58,9 +58,28 @@ function initializeDatabase() {
                 console.error('Error creating payments table:', err);
             } else {
                 console.log('Payments table created successfully');
-                console.log('Database initialization complete');
             }
         });
+
+        // Create news table
+        db.run(`CREATE TABLE IF NOT EXISTS news (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            category TEXT NOT NULL,
+            image TEXT,
+            status TEXT DEFAULT 'draft',
+            date TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`, (err) => {
+            if (err) {
+                console.error('Error creating news table:', err);
+            } else {
+                console.log('News table created successfully');
+            }
+        });
+
+        console.log('Database initialization complete');
     });
 }
 
@@ -223,6 +242,78 @@ app.post('/api/payments', async (req, res) => {
     } catch (error) {
         console.error('Error creating payment:', error);
         res.status(500).json({ error: 'Error creating payment' });
+    }
+});
+
+// News endpoints
+app.get('/api/news', async (req, res) => {
+    try {
+        const news = await dbAll('SELECT * FROM news ORDER BY date DESC');
+        res.json(news);
+    } catch (error) {
+        console.error('Error fetching news:', error);
+        res.status(500).json({ error: 'Error fetching news' });
+    }
+});
+
+app.post('/api/news', async (req, res) => {
+    try {
+        const { title, content, category, image, status, date } = req.body;
+        
+        const result = await dbRun(
+            'INSERT INTO news (title, content, category, image, status, date) VALUES (?, ?, ?, ?, ?, ?)',
+            [title, content, category, image, status, date]
+        );
+        
+        const newNews = await dbGet('SELECT * FROM news WHERE id = ?', [result.id]);
+        res.status(201).json(newNews);
+    } catch (error) {
+        console.error('Error creating news:', error);
+        res.status(500).json({ error: 'Error creating news' });
+    }
+});
+
+app.put('/api/news/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { title, content, category, image, status, date } = req.body;
+        
+        // Check if news exists
+        const news = await dbGet('SELECT * FROM news WHERE id = ?', [id]);
+        if (!news) {
+            return res.status(404).json({ error: 'News not found' });
+        }
+        
+        await dbRun(
+            `UPDATE news 
+             SET title = ?, content = ?, category = ?, image = ?, status = ?, date = ?
+             WHERE id = ?`,
+            [title, content, category, image, status, date, id]
+        );
+        
+        const updatedNews = await dbGet('SELECT * FROM news WHERE id = ?', [id]);
+        res.json(updatedNews);
+    } catch (error) {
+        console.error('Error updating news:', error);
+        res.status(500).json({ error: 'Error updating news' });
+    }
+});
+
+app.delete('/api/news/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        // Check if news exists
+        const news = await dbGet('SELECT * FROM news WHERE id = ?', [id]);
+        if (!news) {
+            return res.status(404).json({ error: 'News not found' });
+        }
+        
+        await dbRun('DELETE FROM news WHERE id = ?', [id]);
+        res.json({ message: 'News deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting news:', error);
+        res.status(500).json({ error: 'Error deleting news' });
     }
 });
 
