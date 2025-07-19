@@ -3,19 +3,11 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
-const QRCode = require('qrcode');
 const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const DB_PATH = path.join(__dirname, 'database.sqlite');
-
-// UPI Configuration
-const UPI_CONFIG = {
-    payeeVpa: 'your.upi@bank', // Replace with your actual UPI ID
-    payeeName: 'Spin Table Tennis Academy',
-    merchantCode: '1234' // Replace with your merchant code if available
-};
 
 // Configure middleware with increased limits
 app.use(cors());
@@ -104,30 +96,11 @@ function initializeDatabase() {
             }
         });
 
-        // Create UPI payments table
-        db.run(`CREATE TABLE IF NOT EXISTS upi_payments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            payment_id TEXT UNIQUE NOT NULL,
-            amount REAL NOT NULL,
-            student_name TEXT NOT NULL,
-            phone TEXT NOT NULL,
-            email TEXT,
-            status TEXT DEFAULT 'pending',
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            completed_at DATETIME
-        )`, (err) => {
-            if (err) {
-                console.error('Error creating upi_payments table:', err);
-            } else {
-                console.log('UPI payments table created successfully');
-            }
-        });
-
         console.log('Database initialization complete');
     });
 }
 
-// Helper function to run database queries with promises
+// Helper function to run SQL queries with promises
 function dbRun(sql, params = []) {
     return new Promise((resolve, reject) => {
         db.run(sql, params, function(err) {
@@ -137,6 +110,7 @@ function dbRun(sql, params = []) {
     });
 }
 
+// Helper function to get single row
 function dbGet(sql, params = []) {
     return new Promise((resolve, reject) => {
         db.get(sql, params, (err, row) => {
@@ -146,6 +120,7 @@ function dbGet(sql, params = []) {
     });
 }
 
+// Helper function to get multiple rows
 function dbAll(sql, params = []) {
     return new Promise((resolve, reject) => {
         db.all(sql, params, (err, rows) => {
@@ -158,7 +133,7 @@ function dbAll(sql, params = []) {
 // Students endpoints
 app.get('/api/students', async (req, res) => {
     try {
-        const students = await dbAll('SELECT * FROM students');
+        const students = await dbAll('SELECT * FROM students ORDER BY created_at DESC');
         res.json(students);
     } catch (error) {
         console.error('Error fetching students:', error);
@@ -166,19 +141,14 @@ app.get('/api/students', async (req, res) => {
     }
 });
 
-// Add student endpoint
 app.post('/api/students', async (req, res) => {
     try {
         const { name, email, phone, package, start_date, end_date, amount, status } = req.body;
-        console.log('Adding student with data:', req.body); // Debug log
-
         const result = await dbRun(
             'INSERT INTO students (name, email, phone, package, start_date, end_date, amount, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
             [name, email, phone, package, start_date, end_date, amount, status]
         );
-
         const newStudent = await dbGet('SELECT * FROM students WHERE id = ?', [result.id]);
-        console.log('Added student:', newStudent); // Debug log
         res.status(201).json(newStudent);
     } catch (error) {
         console.error('Error creating student:', error);
@@ -186,31 +156,15 @@ app.post('/api/students', async (req, res) => {
     }
 });
 
-// Update student endpoint
 app.put('/api/students/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const { name, email, phone, package, start_date, end_date, amount, status } = req.body;
-        console.log('Updating student with data:', req.body); // Debug log
-        
-        // First, check if the student exists
-        const student = await dbGet('SELECT * FROM students WHERE id = ?', [id]);
-        if (!student) {
-            return res.status(404).json({ error: 'Student not found' });
-        }
-        
-        // Update the student
         await dbRun(
-            `UPDATE students 
-             SET name = ?, email = ?, phone = ?, package = ?, 
-                 start_date = ?, end_date = ?, amount = ?, status = ?
-             WHERE id = ?`,
+            'UPDATE students SET name = ?, email = ?, phone = ?, package = ?, start_date = ?, end_date = ?, amount = ?, status = ? WHERE id = ?',
             [name, email, phone, package, start_date, end_date, amount, status, id]
         );
-        
-        // Get the updated student
         const updatedStudent = await dbGet('SELECT * FROM students WHERE id = ?', [id]);
-        console.log('Updated student:', updatedStudent); // Debug log
         res.json(updatedStudent);
     } catch (error) {
         console.error('Error updating student:', error);
@@ -218,35 +172,26 @@ app.put('/api/students/:id', async (req, res) => {
     }
 });
 
-// Delete student endpoint
 app.delete('/api/students/:id', async (req, res) => {
-    const { id } = req.params;
-    console.log('Deleting student with ID:', id); // Debug log
-
     try {
-        // First, check if the student exists
-        const student = await dbGet('SELECT * FROM students WHERE id = ?', [id]);
-        if (!student) {
-            return res.status(404).json({ error: 'Student not found' });
-        }
-
-        // Start a transaction to delete both student and related payments
+        const { id } = req.params;
+        
+        // Start a transaction
         await dbRun('BEGIN TRANSACTION');
-
+        
         try {
-            // Delete related payments first (due to foreign key constraint)
+            // Delete related payments first
             await dbRun('DELETE FROM payments WHERE student_id = ?', [id]);
-            console.log('Deleted related payments for student:', id);
-
-            // Delete the student
+            
+            // Then delete the student
             await dbRun('DELETE FROM students WHERE id = ?', [id]);
-            console.log('Deleted student:', id);
-
+            
             // Commit the transaction
             await dbRun('COMMIT');
+            
             res.json({ message: 'Student and related payments deleted successfully' });
         } catch (error) {
-            // If anything goes wrong, rollback the transaction
+            // Rollback on error
             await dbRun('ROLLBACK');
             throw error;
         }
@@ -263,6 +208,7 @@ app.get('/api/payments', async (req, res) => {
             SELECT p.*, s.name as student_name 
             FROM payments p
             LEFT JOIN students s ON p.student_id = s.id
+            ORDER BY p.created_at DESC
         `);
         res.json(payments);
     } catch (error) {
@@ -300,18 +246,11 @@ app.get('/api/news', async (req, res) => {
 app.post('/api/news', async (req, res) => {
     try {
         const { title, content, category, image, status, isBreaking, isHighlighted, date } = req.body;
-        console.log('Adding news with data:', req.body); // Debug log
-
         const result = await dbRun(
-            `INSERT INTO news (
-                title, content, category, image, status, 
-                isBreaking, isHighlighted, date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [title, content, category, image, status, isBreaking ? 1 : 0, isHighlighted ? 1 : 0, date]
+            'INSERT INTO news (title, content, category, image, status, isBreaking, isHighlighted, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [title, content, category, image, status, isBreaking, isHighlighted, date]
         );
-
         const newNews = await dbGet('SELECT * FROM news WHERE id = ?', [result.id]);
-        console.log('Added news:', newNews); // Debug log
         res.status(201).json(newNews);
     } catch (error) {
         console.error('Error creating news:', error);
@@ -323,24 +262,11 @@ app.put('/api/news/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const { title, content, category, image, status, isBreaking, isHighlighted, date } = req.body;
-        console.log('Updating news with data:', req.body); // Debug log
-
-        // First, check if news exists
-        const news = await dbGet('SELECT * FROM news WHERE id = ?', [id]);
-        if (!news) {
-            return res.status(404).json({ error: 'News not found' });
-        }
-
         await dbRun(
-            `UPDATE news 
-             SET title = ?, content = ?, category = ?, image = ?, 
-                 status = ?, isBreaking = ?, isHighlighted = ?, date = ?
-             WHERE id = ?`,
-            [title, content, category, image, status, isBreaking ? 1 : 0, isHighlighted ? 1 : 0, date, id]
+            'UPDATE news SET title = ?, content = ?, category = ?, image = ?, status = ?, isBreaking = ?, isHighlighted = ?, date = ? WHERE id = ?',
+            [title, content, category, image, status, isBreaking, isHighlighted, date, id]
         );
-
         const updatedNews = await dbGet('SELECT * FROM news WHERE id = ?', [id]);
-        console.log('Updated news:', updatedNews); // Debug log
         res.json(updatedNews);
     } catch (error) {
         console.error('Error updating news:', error);
@@ -351,100 +277,11 @@ app.put('/api/news/:id', async (req, res) => {
 app.delete('/api/news/:id', async (req, res) => {
     try {
         const { id } = req.params;
-
-        // Check if news exists
-        const news = await dbGet('SELECT * FROM news WHERE id = ?', [id]);
-        if (!news) {
-            return res.status(404).json({ error: 'News not found' });
-        }
-
         await dbRun('DELETE FROM news WHERE id = ?', [id]);
         res.json({ message: 'News deleted successfully' });
     } catch (error) {
         console.error('Error deleting news:', error);
         res.status(500).json({ error: 'Error deleting news' });
-    }
-});
-
-// Generate UPI QR code
-app.post('/api/upi/generate', async (req, res) => {
-    try {
-        const { amount, studentName, phone, email } = req.body;
-        
-        // Generate unique payment ID
-        const paymentId = uuidv4();
-        
-        // Create UPI payment URL
-        const upiUrl = `upi://pay?pa=${UPI_CONFIG.payeeVpa}&pn=${encodeURIComponent(UPI_CONFIG.payeeName)}&am=${amount}&tn=${encodeURIComponent(`Payment for ${studentName}`)}&mc=${UPI_CONFIG.merchantCode}&tr=${paymentId}`;
-        
-        // Generate QR code
-        const qrCode = await QRCode.toDataURL(upiUrl);
-        
-        // Save payment details to database
-        await dbRun(
-            'INSERT INTO upi_payments (payment_id, amount, student_name, phone, email) VALUES (?, ?, ?, ?, ?)',
-            [paymentId, amount, studentName, phone, email]
-        );
-        
-        res.json({
-            paymentId,
-            qrCode,
-            upiId: UPI_CONFIG.payeeVpa
-        });
-    } catch (error) {
-        console.error('Error generating UPI QR code:', error);
-        res.status(500).json({ error: 'Error generating UPI QR code' });
-    }
-});
-
-// Check payment status
-app.get('/api/upi/status/:paymentId', async (req, res) => {
-    try {
-        const { paymentId } = req.params;
-        
-        // Get payment status from database
-        const payment = await dbGet(
-            'SELECT * FROM upi_payments WHERE payment_id = ?',
-            [paymentId]
-        );
-        
-        if (!payment) {
-            return res.status(404).json({ error: 'Payment not found' });
-        }
-        
-        res.json({
-            paymentId: payment.payment_id,
-            status: payment.status,
-            completedAt: payment.completed_at
-        });
-    } catch (error) {
-        console.error('Error checking payment status:', error);
-        res.status(500).json({ error: 'Error checking payment status' });
-    }
-});
-
-// Update payment status (this would be called by your payment gateway webhook in production)
-app.post('/api/upi/webhook', async (req, res) => {
-    try {
-        const { paymentId, status } = req.body;
-        
-        // Update payment status
-        if (status === 'completed') {
-            await dbRun(
-                'UPDATE upi_payments SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE payment_id = ?',
-                [status, paymentId]
-            );
-        } else {
-            await dbRun(
-                'UPDATE upi_payments SET status = ? WHERE payment_id = ?',
-                [status, paymentId]
-            );
-        }
-        
-        res.json({ message: 'Payment status updated successfully' });
-    } catch (error) {
-        console.error('Error updating payment status:', error);
-        res.status(500).json({ error: 'Error updating payment status' });
     }
 });
 
