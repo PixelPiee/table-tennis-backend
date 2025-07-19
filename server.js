@@ -14,8 +14,16 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
         console.error('Error opening database:', err);
         process.exit(1);
     } else {
-        console.log('Connected to SQLite database');
-        initializeDatabase();
+        console.log('Connected to SQLite database at:', DB_PATH);
+        // Enable foreign keys
+        db.run('PRAGMA foreign_keys = ON', (err) => {
+            if (err) {
+                console.error('Error enabling foreign keys:', err);
+            } else {
+                console.log('Foreign key constraints enabled');
+                initializeDatabase();
+            }
+        });
     }
 });
 
@@ -41,7 +49,7 @@ function initializeDatabase() {
             }
         });
 
-        // Create payments table
+        // Create payments table with CASCADE delete
         db.run(`CREATE TABLE IF NOT EXISTS payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             student_id INTEGER,
@@ -50,7 +58,7 @@ function initializeDatabase() {
             payment_method TEXT,
             notes TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (student_id) REFERENCES students (id)
+            FOREIGN KEY (student_id) REFERENCES students (id) ON DELETE CASCADE
         )`, (err) => {
             if (err) {
                 console.error('Error creating payments table:', err);
@@ -154,10 +162,14 @@ app.post('/api/payments', async (req, res) => {
 app.delete('/api/students/:id', async (req, res) => {
     try {
         const { id } = req.params;
+        console.log(`Received delete request for student ID: ${id}`);
         
         // First, check if the student exists
         const student = await dbGet('SELECT * FROM students WHERE id = ?', [id]);
+        console.log('Found student:', student);
+        
         if (!student) {
+            console.log(`No student found with ID: ${id}`);
             return res.status(404).json({ error: 'Student not found' });
         }
         
@@ -165,35 +177,32 @@ app.delete('/api/students/:id', async (req, res) => {
         await new Promise((resolve, reject) => {
             db.serialize(() => {
                 db.run('BEGIN TRANSACTION;');
-                // Delete related payments first (due to foreign key constraint)
-                db.run('DELETE FROM payments WHERE student_id = ?', [id], function(err) {
+                
+                // Delete the student (payments will be deleted automatically due to ON DELETE CASCADE)
+                db.run('DELETE FROM students WHERE id = ?', [id], function(err) {
                     if (err) {
+                        console.error('Error during delete:', err);
                         db.run('ROLLBACK;');
                         return reject(err);
                     }
-                    // Then delete the student
-                    db.run('DELETE FROM students WHERE id = ?', [id], function(err) {
-                        if (err) {
-                            db.run('ROLLBACK;');
-                            return reject(err);
-                        }
-                        
-                        // Check if any rows were affected
-                        if (this.changes === 0) {
-                            db.run('ROLLBACK;');
-                            return reject(new Error('No student found with the specified ID'));
-                        }
-                        
-                        db.run('COMMIT;');
-                        resolve();
-                    });
+                    
+                    // Check if any rows were affected
+                    if (this.changes === 0) {
+                        console.log('No rows affected during delete');
+                        db.run('ROLLBACK;');
+                        return reject(new Error('No student found with the specified ID'));
+                    }
+                    
+                    console.log(`Successfully deleted student with ID: ${id}`);
+                    db.run('COMMIT;');
+                    resolve();
                 });
             });
         });
         
         res.status(200).json({ success: true, message: 'Student deleted successfully' });
     } catch (error) {
-        console.error('Error deleting student:', error);
+        console.error('Error in delete endpoint:', error);
         if (error.message === 'No student found with the specified ID') {
             res.status(404).json({ error: error.message });
         } else {
