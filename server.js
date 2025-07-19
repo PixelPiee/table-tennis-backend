@@ -69,6 +69,8 @@ function initializeDatabase() {
             category TEXT NOT NULL,
             image TEXT,
             status TEXT DEFAULT 'draft',
+            isBreaking BOOLEAN DEFAULT 0,
+            isHighlighted BOOLEAN DEFAULT 0,
             date TEXT NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`, (err) => {
@@ -258,14 +260,19 @@ app.get('/api/news', async (req, res) => {
 
 app.post('/api/news', async (req, res) => {
     try {
-        const { title, content, category, image, status, date } = req.body;
-        
+        const { title, content, category, image, status, isBreaking, isHighlighted, date } = req.body;
+        console.log('Adding news with data:', req.body); // Debug log
+
         const result = await dbRun(
-            'INSERT INTO news (title, content, category, image, status, date) VALUES (?, ?, ?, ?, ?, ?)',
-            [title, content, category, image, status, date]
+            `INSERT INTO news (
+                title, content, category, image, status, 
+                isBreaking, isHighlighted, date
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [title, content, category, image, status, isBreaking ? 1 : 0, isHighlighted ? 1 : 0, date]
         );
-        
+
         const newNews = await dbGet('SELECT * FROM news WHERE id = ?', [result.id]);
+        console.log('Added news:', newNews); // Debug log
         res.status(201).json(newNews);
     } catch (error) {
         console.error('Error creating news:', error);
@@ -276,22 +283,25 @@ app.post('/api/news', async (req, res) => {
 app.put('/api/news/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { title, content, category, image, status, date } = req.body;
-        
-        // Check if news exists
+        const { title, content, category, image, status, isBreaking, isHighlighted, date } = req.body;
+        console.log('Updating news with data:', req.body); // Debug log
+
+        // First, check if news exists
         const news = await dbGet('SELECT * FROM news WHERE id = ?', [id]);
         if (!news) {
             return res.status(404).json({ error: 'News not found' });
         }
-        
+
         await dbRun(
             `UPDATE news 
-             SET title = ?, content = ?, category = ?, image = ?, status = ?, date = ?
+             SET title = ?, content = ?, category = ?, image = ?, 
+                 status = ?, isBreaking = ?, isHighlighted = ?, date = ?
              WHERE id = ?`,
-            [title, content, category, image, status, date, id]
+            [title, content, category, image, status, isBreaking ? 1 : 0, isHighlighted ? 1 : 0, date, id]
         );
-        
+
         const updatedNews = await dbGet('SELECT * FROM news WHERE id = ?', [id]);
+        console.log('Updated news:', updatedNews); // Debug log
         res.json(updatedNews);
     } catch (error) {
         console.error('Error updating news:', error);
@@ -302,13 +312,13 @@ app.put('/api/news/:id', async (req, res) => {
 app.delete('/api/news/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        
+
         // Check if news exists
         const news = await dbGet('SELECT * FROM news WHERE id = ?', [id]);
         if (!news) {
             return res.status(404).json({ error: 'News not found' });
         }
-        
+
         await dbRun('DELETE FROM news WHERE id = ?', [id]);
         res.json({ message: 'News deleted successfully' });
     } catch (error) {
