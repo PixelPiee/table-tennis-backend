@@ -158,6 +158,44 @@ app.put('/api/students/:id', async (req, res) => {
     }
 });
 
+// Delete student endpoint
+app.delete('/api/students/:id', async (req, res) => {
+    const { id } = req.params;
+    console.log('Deleting student with ID:', id); // Debug log
+
+    try {
+        // First, check if the student exists
+        const student = await dbGet('SELECT * FROM students WHERE id = ?', [id]);
+        if (!student) {
+            return res.status(404).json({ error: 'Student not found' });
+        }
+
+        // Start a transaction to delete both student and related payments
+        await dbRun('BEGIN TRANSACTION');
+
+        try {
+            // Delete related payments first (due to foreign key constraint)
+            await dbRun('DELETE FROM payments WHERE student_id = ?', [id]);
+            console.log('Deleted related payments for student:', id);
+
+            // Delete the student
+            await dbRun('DELETE FROM students WHERE id = ?', [id]);
+            console.log('Deleted student:', id);
+
+            // Commit the transaction
+            await dbRun('COMMIT');
+            res.json({ message: 'Student and related payments deleted successfully' });
+        } catch (error) {
+            // If anything goes wrong, rollback the transaction
+            await dbRun('ROLLBACK');
+            throw error;
+        }
+    } catch (error) {
+        console.error('Error deleting student:', error);
+        res.status(500).json({ error: 'Error deleting student' });
+    }
+});
+
 // Payments endpoints
 app.get('/api/payments', async (req, res) => {
     try {
