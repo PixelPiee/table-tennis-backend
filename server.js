@@ -21,6 +21,14 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
                 console.error('Error enabling foreign keys:', err);
             } else {
                 console.log('Foreign key constraints enabled');
+                // Verify foreign keys are enabled
+                db.get('PRAGMA foreign_keys', (err, result) => {
+                    if (err) {
+                        console.error('Error checking foreign keys status:', err);
+                    } else {
+                        console.log('Foreign keys status:', result);
+                    }
+                });
                 initializeDatabase();
             }
         });
@@ -172,6 +180,10 @@ app.delete('/api/students/:id', async (req, res) => {
             console.log(`No student found with ID: ${id}`);
             return res.status(404).json({ error: 'Student not found' });
         }
+
+        // Get associated payments before deletion
+        const payments = await dbAll('SELECT * FROM payments WHERE student_id = ?', [id]);
+        console.log(`Found ${payments.length} payments associated with student:`, payments);
         
         // Start a transaction to ensure atomicity
         await new Promise((resolve, reject) => {
@@ -193,6 +205,20 @@ app.delete('/api/students/:id', async (req, res) => {
                         return reject(new Error('No student found with the specified ID'));
                     }
                     
+                    // Verify payments were deleted
+                    db.all('SELECT * FROM payments WHERE student_id = ?', [id], (err, remainingPayments) => {
+                        if (err) {
+                            console.error('Error checking remaining payments:', err);
+                        } else {
+                            console.log('Remaining payments after delete:', remainingPayments);
+                            if (remainingPayments.length > 0) {
+                                console.warn('Warning: Some payments were not deleted');
+                            } else {
+                                console.log('All associated payments were successfully deleted');
+                            }
+                        }
+                    });
+                    
                     console.log(`Successfully deleted student with ID: ${id}`);
                     db.run('COMMIT;');
                     resolve();
@@ -200,7 +226,11 @@ app.delete('/api/students/:id', async (req, res) => {
             });
         });
         
-        res.status(200).json({ success: true, message: 'Student deleted successfully' });
+        res.status(200).json({ 
+            success: true, 
+            message: 'Student and all associated payments deleted successfully',
+            deletedPayments: payments.length
+        });
     } catch (error) {
         console.error('Error in delete endpoint:', error);
         if (error.message === 'No student found with the specified ID') {
