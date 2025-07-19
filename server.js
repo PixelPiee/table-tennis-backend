@@ -8,6 +8,20 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const DB_PATH = path.join(__dirname, 'database.sqlite');
 
+// Configure middleware with increased limits
+app.use(cors());
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
+
+// Add error handling middleware
+app.use((err, req, res, next) => {
+    console.error('Error:', err);
+    if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+        return res.status(400).json({ error: 'Invalid JSON' });
+    }
+    next(err);
+});
+
 // Create database connection
 const db = new sqlite3.Database(DB_PATH, (err) => {
     if (err) {
@@ -84,9 +98,6 @@ function initializeDatabase() {
         console.log('Database initialization complete');
     });
 }
-
-app.use(cors());
-app.use(bodyParser.json());
 
 // Helper function to run database queries with promises
 function dbRun(sql, params = []) {
