@@ -3,10 +3,19 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const QRCode = require('qrcode');
+const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const DB_PATH = path.join(__dirname, 'database.sqlite');
+
+// UPI Configuration
+const UPI_CONFIG = {
+    payeeVpa: 'your.upi@bank', // Replace with your actual UPI ID
+    payeeName: 'Spin Table Tennis Academy',
+    merchantCode: '1234' // Replace with your merchant code if available
+};
 
 // Configure middleware with increased limits
 app.use(cors());
@@ -92,6 +101,25 @@ function initializeDatabase() {
                 console.error('Error creating news table:', err);
             } else {
                 console.log('News table created successfully');
+            }
+        });
+
+        // Create UPI payments table
+        db.run(`CREATE TABLE IF NOT EXISTS upi_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            payment_id TEXT UNIQUE NOT NULL,
+            amount REAL NOT NULL,
+            student_name TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            email TEXT,
+            status TEXT DEFAULT 'pending',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            completed_at DATETIME
+        )`, (err) => {
+            if (err) {
+                console.error('Error creating upi_payments table:', err);
+            } else {
+                console.log('UPI payments table created successfully');
             }
         });
 
@@ -338,9 +366,91 @@ app.delete('/api/news/:id', async (req, res) => {
     }
 });
 
+// Generate UPI QR code
+app.post('/api/upi/generate', async (req, res) => {
+    try {
+        const { amount, studentName, phone, email } = req.body;
+        
+        // Generate unique payment ID
+        const paymentId = uuidv4();
+        
+        // Create UPI payment URL
+        const upiUrl = `upi://pay?pa=${UPI_CONFIG.payeeVpa}&pn=${encodeURIComponent(UPI_CONFIG.payeeName)}&am=${amount}&tn=${encodeURIComponent(`Payment for ${studentName}`)}&mc=${UPI_CONFIG.merchantCode}&tr=${paymentId}`;
+        
+        // Generate QR code
+        const qrCode = await QRCode.toDataURL(upiUrl);
+        
+        // Save payment details to database
+        await dbRun(
+            'INSERT INTO upi_payments (payment_id, amount, student_name, phone, email) VALUES (?, ?, ?, ?, ?)',
+            [paymentId, amount, studentName, phone, email]
+        );
+        
+        res.json({
+            paymentId,
+            qrCode,
+            upiId: UPI_CONFIG.payeeVpa
+        });
+    } catch (error) {
+        console.error('Error generating UPI QR code:', error);
+        res.status(500).json({ error: 'Error generating UPI QR code' });
+    }
+});
+
+// Check payment status
+app.get('/api/upi/status/:paymentId', async (req, res) => {
+    try {
+        const { paymentId } = req.params;
+        
+        // Get payment status from database
+        const payment = await dbGet(
+            'SELECT * FROM upi_payments WHERE payment_id = ?',
+            [paymentId]
+        );
+        
+        if (!payment) {
+            return res.status(404).json({ error: 'Payment not found' });
+        }
+        
+        res.json({
+            paymentId: payment.payment_id,
+            status: payment.status,
+            completedAt: payment.completed_at
+        });
+    } catch (error) {
+        console.error('Error checking payment status:', error);
+        res.status(500).json({ error: 'Error checking payment status' });
+    }
+});
+
+// Update payment status (this would be called by your payment gateway webhook in production)
+app.post('/api/upi/webhook', async (req, res) => {
+    try {
+        const { paymentId, status } = req.body;
+        
+        // Update payment status
+        if (status === 'completed') {
+            await dbRun(
+                'UPDATE upi_payments SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE payment_id = ?',
+                [status, paymentId]
+            );
+        } else {
+            await dbRun(
+                'UPDATE upi_payments SET status = ? WHERE payment_id = ?',
+                [status, paymentId]
+            );
+        }
+        
+        res.json({ message: 'Payment status updated successfully' });
+    } catch (error) {
+        console.error('Error updating payment status:', error);
+        res.status(500).json({ error: 'Error updating payment status' });
+    }
+});
+
 // Start server
 app.listen(PORT, () => {
-    console.log(`Server running at http://localhost:${PORT}`);
+    console.log(`Server is running on port ${PORT}`);
 });
 
 // Handle process termination
