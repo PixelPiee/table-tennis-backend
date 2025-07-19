@@ -64,6 +64,7 @@ function initializeDatabase() {
 
 app.use(cors());
 app.use(bodyParser.json());
+app.use(express.static(path.join(__dirname, '..', 'spin-table-tennis')));
 
 // Helper function to run database queries with promises
 function dbRun(sql, params = []) {
@@ -146,6 +147,58 @@ app.post('/api/payments', async (req, res) => {
     } catch (error) {
         console.error('Error creating payment:', error);
         res.status(500).json({ error: 'Error creating payment' });
+    }
+});
+
+// Delete student endpoint
+app.delete('/api/students/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        // First, check if the student exists
+        const student = await dbGet('SELECT * FROM students WHERE id = ?', [id]);
+        if (!student) {
+            return res.status(404).json({ error: 'Student not found' });
+        }
+        
+        // Start a transaction to ensure atomicity
+        await new Promise((resolve, reject) => {
+            db.serialize(() => {
+                db.run('BEGIN TRANSACTION;');
+                // Delete related payments first (due to foreign key constraint)
+                db.run('DELETE FROM payments WHERE student_id = ?', [id], function(err) {
+                    if (err) {
+                        db.run('ROLLBACK;');
+                        return reject(err);
+                    }
+                    // Then delete the student
+                    db.run('DELETE FROM students WHERE id = ?', [id], function(err) {
+                        if (err) {
+                            db.run('ROLLBACK;');
+                            return reject(err);
+                        }
+                        
+                        // Check if any rows were affected
+                        if (this.changes === 0) {
+                            db.run('ROLLBACK;');
+                            return reject(new Error('No student found with the specified ID'));
+                        }
+                        
+                        db.run('COMMIT;');
+                        resolve();
+                    });
+                });
+            });
+        });
+        
+        res.status(200).json({ success: true, message: 'Student deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting student:', error);
+        if (error.message === 'No student found with the specified ID') {
+            res.status(404).json({ error: error.message });
+        } else {
+            res.status(500).json({ error: 'Error deleting student: ' + error.message });
+        }
     }
 });
 
