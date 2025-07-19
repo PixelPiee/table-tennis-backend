@@ -29,7 +29,7 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
                         console.log('Foreign keys status:', result);
                     }
                 });
-                initializeDatabase();
+        initializeDatabase();
             }
         });
     }
@@ -322,8 +322,8 @@ app.delete('/api/students/:id', async (req, res) => {
                     // Check if any rows were affected
                     if (this.changes === 0) {
                         console.log('No rows affected during delete');
-                        db.run('ROLLBACK;');
-                        return reject(new Error('No student found with the specified ID'));
+                            db.run('ROLLBACK;');
+                            return reject(new Error('No student found with the specified ID'));
                     }
                     
                     // Verify payments were deleted
