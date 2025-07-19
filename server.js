@@ -32,6 +32,7 @@ function initializeDatabase() {
             start_date TEXT,
             end_date TEXT,
             amount REAL,
+            status TEXT DEFAULT 'pending',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`, (err) => {
             if (err) {
@@ -49,6 +50,7 @@ function initializeDatabase() {
             payment_date TEXT NOT NULL,
             payment_method TEXT,
             notes TEXT,
+            status TEXT DEFAULT 'pending',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (student_id) REFERENCES students (id)
         )`, (err) => {
@@ -104,14 +106,19 @@ app.get('/api/students', async (req, res) => {
     }
 });
 
+// Add student endpoint
 app.post('/api/students', async (req, res) => {
     try {
-        const { name, email, phone, package, start_date, end_date, amount } = req.body;
+        const { name, email, phone, package, start_date, end_date, amount, status } = req.body;
+        console.log('Adding student with data:', req.body); // Debug log
+
         const result = await dbRun(
-            'INSERT INTO students (name, email, phone, package, start_date, end_date, amount) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [name, email, phone, package, start_date, end_date, amount]
+            'INSERT INTO students (name, email, phone, package, start_date, end_date, amount, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [name, email, phone, package, start_date, end_date, amount, status]
         );
+
         const newStudent = await dbGet('SELECT * FROM students WHERE id = ?', [result.id]);
+        console.log('Added student:', newStudent); // Debug log
         res.status(201).json(newStudent);
     } catch (error) {
         console.error('Error creating student:', error);
@@ -119,10 +126,12 @@ app.post('/api/students', async (req, res) => {
     }
 });
 
-// Delete student endpoint
-app.delete('/api/students/:id', async (req, res) => {
+// Update student endpoint
+app.put('/api/students/:id', async (req, res) => {
     try {
         const { id } = req.params;
+        const { name, email, phone, package, start_date, end_date, amount, status } = req.body;
+        console.log('Updating student with data:', req.body); // Debug log
         
         // First, check if the student exists
         const student = await dbGet('SELECT * FROM students WHERE id = ?', [id]);
@@ -130,44 +139,22 @@ app.delete('/api/students/:id', async (req, res) => {
             return res.status(404).json({ error: 'Student not found' });
         }
         
-        // Start a transaction to ensure atomicity
-        await new Promise((resolve, reject) => {
-            db.serialize(() => {
-                db.run('BEGIN TRANSACTION;');
-                // Delete related payments first (due to foreign key constraint)
-                db.run('DELETE FROM payments WHERE student_id = ?', [id], function(err) {
-                    if (err) {
-                        db.run('ROLLBACK;');
-                        return reject(err);
-                    }
-                    // Then delete the student
-                    db.run('DELETE FROM students WHERE id = ?', [id], function(err) {
-                        if (err) {
-                            db.run('ROLLBACK;');
-                            return reject(err);
-                        }
-                        
-                        // Check if any rows were affected
-                        if (this.changes === 0) {
-                            db.run('ROLLBACK;');
-                            return reject(new Error('No student found with the specified ID'));
-                        }
-                        
-                        db.run('COMMIT;');
-                        resolve();
-                    });
-                });
-            });
-        });
+        // Update the student
+        await dbRun(
+            `UPDATE students 
+             SET name = ?, email = ?, phone = ?, package = ?, 
+                 start_date = ?, end_date = ?, amount = ?, status = ?
+             WHERE id = ?`,
+            [name, email, phone, package, start_date, end_date, amount, status, id]
+        );
         
-        res.status(200).json({ success: true, message: 'Student deleted successfully' });
+        // Get the updated student
+        const updatedStudent = await dbGet('SELECT * FROM students WHERE id = ?', [id]);
+        console.log('Updated student:', updatedStudent); // Debug log
+        res.json(updatedStudent);
     } catch (error) {
-        console.error('Error deleting student:', error);
-        if (error.message === 'No student found with the specified ID') {
-            res.status(404).json({ error: error.message });
-        } else {
-            res.status(500).json({ error: 'Error deleting student: ' + error.message });
-        }
+        console.error('Error updating student:', error);
+        res.status(500).json({ error: 'Error updating student' });
     }
 });
 
