@@ -3,71 +3,10 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
-const { v4: uuidv4 } = require('uuid');
-const multer = require('multer');
-const cloudinary = require('cloudinary').v2;
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const DB_PATH = path.join(__dirname, 'database.sqlite');
-
-// Simple CORS configuration
-app.use(cors());
-
-// Configure middleware with increased limits
-app.use(bodyParser.json({ limit: '50mb' }));
-app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
-
-// Add headers middleware
-app.use((req, res, next) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    
-    // Handle preflight
-    if (req.method === 'OPTIONS') {
-        return res.status(200).json({
-            body: "OK"
-        });
-    }
-    
-    next();
-});
-
-// Configure Cloudinary
-cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET
-});
-
-// Configure multer for image uploads with Cloudinary
-const storage = new CloudinaryStorage({
-    cloudinary: cloudinary,
-    params: {
-        folder: 'spin-table-tennis/news',
-        allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
-        transformation: [{ width: 1200, crop: 'limit' }], // Optimize image size
-    },
-});
-
-const upload = multer({
-    storage: storage,
-    limits: {
-        fileSize: 5 * 1024 * 1024 // 5MB limit
-    }
-});
-
-// Add error handling middleware
-app.use((err, req, res, next) => {
-    console.error('Error:', err);
-    if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
-        return res.status(400).json({ error: 'Invalid JSON' });
-    }
-    next(err);
-});
 
 // Create database connection
 const db = new sqlite3.Database(DB_PATH, (err) => {
@@ -119,34 +58,16 @@ function initializeDatabase() {
                 console.error('Error creating payments table:', err);
             } else {
                 console.log('Payments table created successfully');
+                console.log('Database initialization complete');
             }
         });
-
-        // Create news table
-        db.run(`CREATE TABLE IF NOT EXISTS news (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            content TEXT NOT NULL,
-            category TEXT NOT NULL,
-            image TEXT,
-            status TEXT DEFAULT 'draft',
-            isBreaking BOOLEAN DEFAULT 0,
-            isHighlighted BOOLEAN DEFAULT 0,
-            date TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`, (err) => {
-            if (err) {
-                console.error('Error creating news table:', err);
-            } else {
-                console.log('News table created successfully');
-            }
-        });
-
-        console.log('Database initialization complete');
     });
 }
 
-// Helper function to run SQL queries with promises
+app.use(cors());
+app.use(bodyParser.json());
+
+// Helper function to run database queries with promises
 function dbRun(sql, params = []) {
     return new Promise((resolve, reject) => {
         db.run(sql, params, function(err) {
@@ -156,7 +77,6 @@ function dbRun(sql, params = []) {
     });
 }
 
-// Helper function to get single row
 function dbGet(sql, params = []) {
     return new Promise((resolve, reject) => {
         db.get(sql, params, (err, row) => {
@@ -166,7 +86,6 @@ function dbGet(sql, params = []) {
     });
 }
 
-// Helper function to get multiple rows
 function dbAll(sql, params = []) {
     return new Promise((resolve, reject) => {
         db.all(sql, params, (err, rows) => {
@@ -179,7 +98,7 @@ function dbAll(sql, params = []) {
 // Students endpoints
 app.get('/api/students', async (req, res) => {
     try {
-        const students = await dbAll('SELECT * FROM students ORDER BY created_at DESC');
+        const students = await dbAll('SELECT * FROM students');
         res.json(students);
     } catch (error) {
         console.error('Error fetching students:', error);
@@ -187,14 +106,19 @@ app.get('/api/students', async (req, res) => {
     }
 });
 
+// Add student endpoint
 app.post('/api/students', async (req, res) => {
     try {
         const { name, email, phone, package, start_date, end_date, amount, status } = req.body;
+        console.log('Adding student with data:', req.body); // Debug log
+
         const result = await dbRun(
             'INSERT INTO students (name, email, phone, package, start_date, end_date, amount, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
             [name, email, phone, package, start_date, end_date, amount, status]
         );
+
         const newStudent = await dbGet('SELECT * FROM students WHERE id = ?', [result.id]);
+        console.log('Added student:', newStudent); // Debug log
         res.status(201).json(newStudent);
     } catch (error) {
         console.error('Error creating student:', error);
@@ -202,15 +126,31 @@ app.post('/api/students', async (req, res) => {
     }
 });
 
+// Update student endpoint
 app.put('/api/students/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const { name, email, phone, package, start_date, end_date, amount, status } = req.body;
+        console.log('Updating student with data:', req.body); // Debug log
+        
+        // First, check if the student exists
+        const student = await dbGet('SELECT * FROM students WHERE id = ?', [id]);
+        if (!student) {
+            return res.status(404).json({ error: 'Student not found' });
+        }
+        
+        // Update the student
         await dbRun(
-            'UPDATE students SET name = ?, email = ?, phone = ?, package = ?, start_date = ?, end_date = ?, amount = ?, status = ? WHERE id = ?',
+            `UPDATE students 
+             SET name = ?, email = ?, phone = ?, package = ?, 
+                 start_date = ?, end_date = ?, amount = ?, status = ?
+             WHERE id = ?`,
             [name, email, phone, package, start_date, end_date, amount, status, id]
         );
+        
+        // Get the updated student
         const updatedStudent = await dbGet('SELECT * FROM students WHERE id = ?', [id]);
+        console.log('Updated student:', updatedStudent); // Debug log
         res.json(updatedStudent);
     } catch (error) {
         console.error('Error updating student:', error);
@@ -218,26 +158,35 @@ app.put('/api/students/:id', async (req, res) => {
     }
 });
 
+// Delete student endpoint
 app.delete('/api/students/:id', async (req, res) => {
+    const { id } = req.params;
+    console.log('Deleting student with ID:', id); // Debug log
+
     try {
-        const { id } = req.params;
-        
-        // Start a transaction
+        // First, check if the student exists
+        const student = await dbGet('SELECT * FROM students WHERE id = ?', [id]);
+        if (!student) {
+            return res.status(404).json({ error: 'Student not found' });
+        }
+
+        // Start a transaction to delete both student and related payments
         await dbRun('BEGIN TRANSACTION');
-        
+
         try {
-            // Delete related payments first
+            // Delete related payments first (due to foreign key constraint)
             await dbRun('DELETE FROM payments WHERE student_id = ?', [id]);
-            
-            // Then delete the student
+            console.log('Deleted related payments for student:', id);
+
+            // Delete the student
             await dbRun('DELETE FROM students WHERE id = ?', [id]);
-            
+            console.log('Deleted student:', id);
+
             // Commit the transaction
             await dbRun('COMMIT');
-            
             res.json({ message: 'Student and related payments deleted successfully' });
         } catch (error) {
-            // Rollback on error
+            // If anything goes wrong, rollback the transaction
             await dbRun('ROLLBACK');
             throw error;
         }
@@ -254,7 +203,6 @@ app.get('/api/payments', async (req, res) => {
             SELECT p.*, s.name as student_name 
             FROM payments p
             LEFT JOIN students s ON p.student_id = s.id
-            ORDER BY p.created_at DESC
         `);
         res.json(payments);
     } catch (error) {
@@ -278,131 +226,9 @@ app.post('/api/payments', async (req, res) => {
     }
 });
 
-// News endpoints
-app.get('/api/news', async (req, res) => {
-    try {
-        const news = await dbAll('SELECT * FROM news ORDER BY date DESC');
-        res.json(news);
-    } catch (error) {
-        console.error('Error fetching news:', error);
-        res.status(500).json({ error: 'Error fetching news' });
-    }
-});
-
-app.post('/api/news/image', upload.single('image'), async (req, res) => {
-    try {
-        if (!req.file) {
-            return res.status(400).json({ error: 'No image file provided' });
-        }
-        res.json({ imageUrl: req.file.path });
-    } catch (error) {
-        console.error('Error uploading image:', error);
-        res.status(500).json({ error: 'Error uploading image' });
-    }
-});
-
-app.post('/api/news', async (req, res) => {
-    try {
-        const { title, content, category, image, status, isBreaking, isHighlighted, date } = req.body;
-        
-        // Handle base64 image data
-        let imageUrl = image;
-        if (image && image.startsWith('data:image')) {
-            try {
-                const uploadResponse = await cloudinary.uploader.upload(image, {
-                    folder: 'spin-table-tennis/news',
-                    transformation: [{ width: 1200, crop: 'limit' }]
-                });
-                imageUrl = uploadResponse.secure_url;
-            } catch (uploadError) {
-                console.error('Error uploading base64 image:', uploadError);
-                throw new Error('Failed to upload image');
-            }
-        }
-
-        const result = await dbRun(
-            'INSERT INTO news (title, content, category, image, status, isBreaking, isHighlighted, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [title, content, category, imageUrl, status, isBreaking, isHighlighted, date]
-        );
-        
-        const newNews = await dbGet('SELECT * FROM news WHERE id = ?', [result.id]);
-        res.status(201).json(newNews);
-    } catch (error) {
-        console.error('Error creating news:', error);
-        res.status(500).json({ error: 'Error creating news' });
-    }
-});
-
-app.put('/api/news/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { title, content, category, image, status, isBreaking, isHighlighted, date } = req.body;
-        
-        // Get the old news item to handle image deletion
-        const oldNews = await dbGet('SELECT image FROM news WHERE id = ?', [id]);
-        
-        // Handle base64 image data
-        let imageUrl = image;
-        if (image && image.startsWith('data:image')) {
-            try {
-                const uploadResponse = await cloudinary.uploader.upload(image, {
-                    folder: 'spin-table-tennis/news',
-                    transformation: [{ width: 1200, crop: 'limit' }]
-                });
-                imageUrl = uploadResponse.secure_url;
-                
-                // Delete old image from Cloudinary if it exists
-                if (oldNews.image && oldNews.image.includes('cloudinary.com')) {
-                    const publicId = oldNews.image.split('/').slice(-1)[0].split('.')[0];
-                    await cloudinary.uploader.destroy(`spin-table-tennis/news/${publicId}`);
-                }
-            } catch (uploadError) {
-                console.error('Error uploading base64 image:', uploadError);
-                throw new Error('Failed to upload image');
-            }
-        }
-
-        await dbRun(
-            'UPDATE news SET title = ?, content = ?, category = ?, image = ?, status = ?, isBreaking = ?, isHighlighted = ?, date = ? WHERE id = ?',
-            [title, content, category, imageUrl, status, isBreaking, isHighlighted, date, id]
-        );
-        
-        const updatedNews = await dbGet('SELECT * FROM news WHERE id = ?', [id]);
-        res.json(updatedNews);
-    } catch (error) {
-        console.error('Error updating news:', error);
-        res.status(500).json({ error: 'Error updating news' });
-    }
-});
-
-app.delete('/api/news/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        
-        // Get the news item to delete its image
-        const news = await dbGet('SELECT image FROM news WHERE id = ?', [id]);
-        
-        // Delete the image from Cloudinary if it exists
-        if (news.image && news.image.includes('cloudinary.com')) {
-            try {
-                const publicId = news.image.split('/').slice(-1)[0].split('.')[0];
-                await cloudinary.uploader.destroy(`spin-table-tennis/news/${publicId}`);
-            } catch (deleteError) {
-                console.error('Error deleting image from Cloudinary:', deleteError);
-            }
-        }
-        
-        await dbRun('DELETE FROM news WHERE id = ?', [id]);
-        res.json({ message: 'News deleted successfully' });
-    } catch (error) {
-        console.error('Error deleting news:', error);
-        res.status(500).json({ error: 'Error deleting news' });
-    }
-});
-
 // Start server
 app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+    console.log(`Server running at http://localhost:${PORT}`);
 });
 
 // Handle process termination
