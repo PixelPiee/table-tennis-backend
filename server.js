@@ -12,8 +12,23 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const DB_PATH = path.join(__dirname, 'database.sqlite');
 
+// CORS configuration
+const corsOptions = {
+    origin: [
+        'https://fancy-mousse-19436b.netlify.app',
+        'http://localhost:5500',
+        'http://127.0.0.1:5500'
+    ],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    credentials: true,
+    optionsSuccessStatus: 200
+};
+
+// Apply CORS middleware with options
+app.use(cors(corsOptions));
+
 // Basic middleware
-app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
