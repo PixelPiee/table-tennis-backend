@@ -113,7 +113,7 @@ function initializeDatabase() {
             status TEXT DEFAULT 'draft',
             isBreaking BOOLEAN DEFAULT 0,
             isHighlighted BOOLEAN DEFAULT 0,
-            date TEXT NOT NULL,
+            date DATETIME DEFAULT CURRENT_TIMESTAMP,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`, (err) => {
             if (err) {
@@ -122,8 +122,6 @@ function initializeDatabase() {
                 console.log('News table created successfully');
             }
         });
-
-        console.log('Database initialization complete');
     });
 }
 
@@ -270,42 +268,16 @@ app.get('/api/news', async (req, res) => {
     }
 });
 
-app.post('/api/news/image', upload.single('image'), async (req, res) => {
-    try {
-        if (!req.file) {
-            return res.status(400).json({ error: 'No image file provided' });
-        }
-        res.json({ imageUrl: req.file.path });
-    } catch (error) {
-        console.error('Error uploading image:', error);
-        res.status(500).json({ error: 'Error uploading image' });
-    }
-});
-
 app.post('/api/news', async (req, res) => {
     try {
         const { title, content, category, image, status, isBreaking, isHighlighted, date } = req.body;
         
-        // Handle base64 image data
-        let imageUrl = image;
-        if (image && image.startsWith('data:image')) {
-            try {
-                const uploadResponse = await cloudinary.uploader.upload(image, {
-                    folder: 'spin-table-tennis/news',
-                    transformation: [{ width: 1200, crop: 'limit' }]
-                });
-                imageUrl = uploadResponse.secure_url;
-            } catch (uploadError) {
-                console.error('Error uploading base64 image:', uploadError);
-                throw new Error('Failed to upload image');
-            }
-        }
-
         const result = await dbRun(
-            'INSERT INTO news (title, content, category, image, status, isBreaking, isHighlighted, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [title, content, category, imageUrl, status, isBreaking, isHighlighted, date]
+            `INSERT INTO news (title, content, category, image, status, isBreaking, isHighlighted, date) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [title, content, category, image, status, isBreaking ? 1 : 0, isHighlighted ? 1 : 0, date]
         );
-        
+
         const newNews = await dbGet('SELECT * FROM news WHERE id = ?', [result.id]);
         res.status(201).json(newNews);
     } catch (error) {
@@ -319,33 +291,17 @@ app.put('/api/news/:id', async (req, res) => {
         const { id } = req.params;
         const { title, content, category, image, status, isBreaking, isHighlighted, date } = req.body;
         
-        // Get the old news item to handle image deletion
-        const oldNews = await dbGet('SELECT image FROM news WHERE id = ?', [id]);
-        
-        // Handle base64 image data
-        let imageUrl = image;
-        if (image && image.startsWith('data:image')) {
-            try {
-                const uploadResponse = await cloudinary.uploader.upload(image, {
-                    folder: 'spin-table-tennis/news',
-                    transformation: [{ width: 1200, crop: 'limit' }]
-                });
-                imageUrl = uploadResponse.secure_url;
-                
-                // Delete old image from Cloudinary if it exists
-                if (oldNews.image && oldNews.image.includes('cloudinary.com')) {
-                    const publicId = oldNews.image.split('/').slice(-1)[0].split('.')[0];
-                    await cloudinary.uploader.destroy(`spin-table-tennis/news/${publicId}`);
-                }
-            } catch (uploadError) {
-                console.error('Error uploading base64 image:', uploadError);
-                throw new Error('Failed to upload image');
-            }
+        const news = await dbGet('SELECT * FROM news WHERE id = ?', [id]);
+        if (!news) {
+            return res.status(404).json({ error: 'News not found' });
         }
-
+        
         await dbRun(
-            'UPDATE news SET title = ?, content = ?, category = ?, image = ?, status = ?, isBreaking = ?, isHighlighted = ?, date = ? WHERE id = ?',
-            [title, content, category, imageUrl, status, isBreaking, isHighlighted, date, id]
+            `UPDATE news 
+             SET title = ?, content = ?, category = ?, image = ?, 
+                 status = ?, isBreaking = ?, isHighlighted = ?, date = ?
+             WHERE id = ?`,
+            [title, content, category, image, status, isBreaking ? 1 : 0, isHighlighted ? 1 : 0, date, id]
         );
         
         const updatedNews = await dbGet('SELECT * FROM news WHERE id = ?', [id]);
@@ -360,17 +316,9 @@ app.delete('/api/news/:id', async (req, res) => {
     try {
         const { id } = req.params;
         
-        // Get the news item to delete its image
-        const news = await dbGet('SELECT image FROM news WHERE id = ?', [id]);
-        
-        // Delete the image from Cloudinary if it exists
-        if (news.image && news.image.includes('cloudinary.com')) {
-            try {
-                const publicId = news.image.split('/').slice(-1)[0].split('.')[0];
-                await cloudinary.uploader.destroy(`spin-table-tennis/news/${publicId}`);
-            } catch (deleteError) {
-                console.error('Error deleting image from Cloudinary:', deleteError);
-            }
+        const news = await dbGet('SELECT * FROM news WHERE id = ?', [id]);
+        if (!news) {
+            return res.status(404).json({ error: 'News not found' });
         }
         
         await dbRun('DELETE FROM news WHERE id = ?', [id]);
@@ -378,6 +326,21 @@ app.delete('/api/news/:id', async (req, res) => {
     } catch (error) {
         console.error('Error deleting news:', error);
         res.status(500).json({ error: 'Error deleting news' });
+    }
+});
+
+// Image upload endpoint
+app.post('/api/news/image', upload.single('image'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No image file provided' });
+        }
+        
+        // The image URL will be available in req.file.path after Cloudinary upload
+        res.json({ imageUrl: req.file.path });
+    } catch (error) {
+        console.error('Error uploading image:', error);
+        res.status(500).json({ error: 'Error uploading image' });
     }
 });
 
