@@ -17,7 +17,8 @@ const corsOptions = {
     origin: [
         'https://fancy-mousse-19436b.netlify.app',
         'http://localhost:5500',
-        'http://127.0.0.1:5500'
+        'http://127.0.0.1:5500',
+        "null"
     ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
